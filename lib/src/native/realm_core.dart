@@ -41,6 +41,7 @@ import '../scheduler.dart';
 import '../subscription.dart';
 import '../user.dart';
 import '../session.dart';
+import '../realm_property.dart';
 import 'realm_bindings.dart';
 
 late RealmLibrary _realmLib;
@@ -91,19 +92,20 @@ class _RealmCore {
     });
   }
 
-  SchemaHandle _createSchema(Iterable<SchemaObject> schema) {
+  SchemaHandle _createSchema(RealmSchema schema) {
     return using((Arena arena) {
       final classCount = schema.length;
 
       final schemaClasses = arena<realm_class_info_t>(classCount);
       final schemaProperties = arena<Pointer<realm_property_info_t>>(classCount);
 
-      for (var i = 0; i < classCount; i++) {
-        final schemaObject = schema.elementAt(i);
+      var i = -1;
+      for (final schemaObject in schema) {
+        ++i;
         final classInfo = schemaClasses.elementAt(i).ref;
 
         classInfo.name = schemaObject.name.toCharPtr(arena);
-        classInfo.primary_key = "".toCharPtr(arena);
+        classInfo.primary_key = (schemaObject.primaryKey?.name ?? '').toCharPtr(arena);
         classInfo.num_properties = schemaObject.properties.length;
         classInfo.num_computed_properties = 0;
         classInfo.key = RLM_INVALID_CLASS_KEY;
@@ -112,14 +114,15 @@ class _RealmCore {
         final propertiesCount = schemaObject.properties.length;
         final properties = arena<realm_property_info_t>(propertiesCount);
 
-        for (var j = 0; j < propertiesCount; j++) {
-          final schemaProperty = schemaObject.properties[j];
+        var j = -1;
+        for (final schemaProperty in schemaObject.properties.values) {
+          ++j;
           final propInfo = properties.elementAt(j).ref;
           propInfo.name = schemaProperty.name.toCharPtr(arena);
           //TODO: assign the correct public name value.
           propInfo.public_name = "".toCharPtr(arena);
-          propInfo.link_target = (schemaProperty.linkTarget ?? "").toCharPtr(arena);
-          propInfo.link_origin_property_name = "".toCharPtr(arena);
+          propInfo.link_target = ((schemaProperty is LinkTargetProperty ? schemaProperty.linkTarget(schema)?.name : '') ?? '').toCharPtr(arena);
+          propInfo.link_origin_property_name = "".toCharPtr(arena); // TODO: Handle backlinks
           propInfo.type = schemaProperty.propertyType.index;
           propInfo.collection_type = schemaProperty.collectionType.index;
           propInfo.flags = realm_property_flags.RLM_PROPERTY_NORMAL;
@@ -129,7 +132,6 @@ class _RealmCore {
           }
 
           if (schemaProperty.primaryKey) {
-            classInfo.primary_key = schemaProperty.name.toCharPtr(arena);
             propInfo.flags = realm_property_flags.RLM_PROPERTY_PRIMARY_KEY;
           }
         }
@@ -486,8 +488,9 @@ class _RealmCore {
     _realmLib.invokeGetBool(() => _realmLib.realm_refresh(realm.handle._pointer), "Could not refresh");
   }
 
-  RealmClassMetadata getClassMetadata(Realm realm, String className, Type classType) {
+  RealmClassMetadata getClassMetadata(Realm realm, SchemaObject schemaObject) {
     return using((Arena arena) {
+      final className = schemaObject.name;
       final found = arena<Bool>();
       final classInfo = arena<realm_class_info_t>();
       _realmLib.invokeGetBool(() => _realmLib.realm_find_class(realm.handle._pointer, className.toCharPtr(arena), found, classInfo),
@@ -498,12 +501,15 @@ class _RealmCore {
       }
 
       final primaryKey = classInfo.ref.primary_key.cast<Utf8>().toRealmDartString(treatEmptyAsNull: true);
-      return RealmClassMetadata(classType, classInfo.ref.key, primaryKey);
+      assert(primaryKey == schemaObject.primaryKey?.name, "$primaryKey == ${schemaObject.primaryKey?.name}");
+
+      return RealmClassMetadata(classInfo.ref.key, schemaObject);
     });
   }
 
-  Map<String, RealmPropertyMetadata> getPropertyMetadata(Realm realm, int classKey) {
+  List<RealmPropertyMetadata> getPropertyMetadata(Realm realm, RealmClassMetadata classMeta) {
     return using((Arena arena) {
+      final classKey = classMeta.key;
       final propertyCountPtr = arena<Size>();
       _realmLib.invokeGetBool(
           () => _realmLib.realm_get_property_keys(realm.handle._pointer, classKey, nullptr, 0, propertyCountPtr), "Error getting property count");
@@ -514,12 +520,12 @@ class _RealmCore {
           "Error getting class properties.");
 
       propertyCount = propertyCountPtr.value;
-      Map<String, RealmPropertyMetadata> result = <String, RealmPropertyMetadata>{};
+      final result = <RealmPropertyMetadata>[];
       for (var i = 0; i < propertyCount; i++) {
         final property = propertiesPtr.elementAt(i);
-        final propertyName = property.ref.name.cast<Utf8>().toRealmDartString()!;
-        final propertyMeta = RealmPropertyMetadata(property.ref.key, RealmCollectionType.values.elementAt(property.ref.collection_type));
-        result[propertyName] = propertyMeta;
+        final name = property.ref.name.cast<Utf8>().toDartString();
+        final propertyMeta = RealmPropertyMetadata(property.ref.key, classMeta.schema.properties[name]!);
+        result.add(propertyMeta);
       }
       return result;
     });

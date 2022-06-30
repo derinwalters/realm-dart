@@ -21,6 +21,7 @@
 import 'dart:io';
 import 'package:test/test.dart' hide test, throws;
 import '../lib/realm.dart';
+import '../lib/src/realm_object.dart';
 
 import 'test.dart';
 
@@ -298,7 +299,7 @@ Future<void> main([List<String>? args]) async {
 
   void testPrimaryKey<T extends RealmObject, K extends Object>(SchemaObject schema, T Function() createObject, K key) {
     test("$T primary key: $key", () {
-      final pkProp = schema.properties.where((p) => p.primaryKey).single;
+      final pkProp = schema.primaryKey!;
       final realm = Realm(Configuration.local([schema]));
       final obj = realm.write(() {
         return realm.add(createObject());
@@ -307,7 +308,7 @@ Future<void> main([List<String>? args]) async {
       final foundObj = realm.find<T>(key);
       expect(foundObj, obj);
 
-      final propValue = RealmObject.get<K>(obj, pkProp.name);
+      final propValue = obj.accessor.getValue(obj, pkProp);
       expect(propValue, key);
 
       realm.close();

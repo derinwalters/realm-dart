@@ -15,14 +15,13 @@
 // limitations under the License.
 //
 ////////////////////////////////////////////////////////////////////////////////
-
 import 'dart:io';
 
 import 'package:path/path.dart' as _path;
 
+import 'init.dart';
 import 'native/realm_core.dart';
 import 'realm_class.dart';
-import 'init.dart';
 
 /// The signature of a callback used to determine if compaction
 /// should be attempted.
@@ -48,11 +47,9 @@ typedef InitialDataCallback = void Function(Realm realm);
 /// Configuration used to create a [Realm] instance
 /// {@category Configuration}
 abstract class Configuration {
-
-  /// The default realm filename to be used. 
+  /// The default realm filename to be used.
   static String get defaultRealmName => _path.basename(defaultRealmPath);
   static set defaultRealmName(String name) => defaultRealmPath = _path.join(_path.dirname(defaultRealmPath), _path.basename(name));
-  
 
   /// The platform dependent path used to store realm files
   ///
@@ -63,14 +60,14 @@ abstract class Configuration {
   /// On Dart standalone Windows, macOS and Linux this is the current directory.
   static String get defaultStoragePath {
     if (isFlutterPlatform) {
-      return realmCore.getAppDirectory(); 
+      return realmCore.getAppDirectory();
     }
 
     return Directory.current.path;
   }
 
   /// The platform dependent path to the default realm file.
-  /// 
+  ///
   /// If set it should contain the path and the name of the realm file. Ex. "~/mypath/myrealm.realm"
   /// [defaultStoragePath] can be used to build this path.
   static late String defaultRealmPath = _path.join(defaultStoragePath, 'default.realm');
@@ -286,7 +283,7 @@ extension FlexibleSyncConfigurationInternal on FlexibleSyncConfiguration {
 
 /// [DisconnectedSyncConfiguration] is used to open [Realm] instances that are synchronized
 /// with MongoDB Atlas, without establishing a connection to Atlas App Services. This allows
-/// for the synchronized realm to be opened in multiple processes concurrently, as long as 
+/// for the synchronized realm to be opened in multiple processes concurrently, as long as
 /// only one of them uses a [FlexibleSyncConfiguration] to sync changes.
 /// {@category Configuration}
 class DisconnectedSyncConfiguration extends Configuration {
@@ -311,45 +308,54 @@ class InMemoryConfiguration extends Configuration {
 /// A collection of properties describing the underlying schema of a [RealmObject].
 ///
 /// {@category Configuration}
-class SchemaObject {
+class SchemaObject<T extends Object?> {
   /// Schema object type.
-  final Type type;
+  Type get type => T;
+  Type get nullableType => nullable<T>();
 
-  /// Collection of the properties of this schema object.
-  final List<SchemaProperty> properties;
+  final T Function() objectFactory;
 
   /// Returns the name of this schema type.
   final String name;
 
+  /// Collection of the properties of this schema object.
+  final Map<String, ValueProperty> properties;
+
+  /// Primary key property, if any
+  final ValueProperty? primaryKey;
+
   /// Creates schema instance with object type and collection of object's properties.
-  const SchemaObject(this.type, this.name, this.properties);
+  const SchemaObject(this.objectFactory, this.name, this.properties, [this.primaryKey]);
+
+  T _createObject(Realm realm, RealmObjectHandle handle) => realm.createObject(handle);
+  RealmList<T> _createList(Realm realm, RealmListHandle handle) => realm.createList(handle);
+}
+
+extension SchemaObjectInternal<T> on SchemaObject<T> {
+  T createObject(Realm realm, RealmObjectHandle handle) => _createObject(realm, handle);
+  RealmList<T> createList(Realm realm, RealmListHandle handle) => _createList(realm, handle);
 }
 
 /// Describes the complete set of classes which may be stored in a `Realm`
 ///
 /// {@category Configuration}
 class RealmSchema extends Iterable<SchemaObject> {
-  late final List<SchemaObject> _schema;
+  final Map<Type, SchemaObject> _byType;
 
   /// Initializes [RealmSchema] instance representing ```schemaObjects``` collection
-  RealmSchema(List<SchemaObject> schemaObjects) {
-    if (schemaObjects.isEmpty) {
+  RealmSchema(Iterable<SchemaObject> schemaObjects) : _byType = <Type, SchemaObject>{for (final s in schemaObjects) s.nullableType: s} {
+    if (_byType.isEmpty) {
       throw RealmError("No schema specified");
     }
-
-    _schema = schemaObjects;
   }
 
   @override
-  Iterator<SchemaObject> get iterator => _schema.iterator;
+  Iterator<SchemaObject> get iterator => _byType.values.iterator;
 
   @override
-  int get length => _schema.length;
+  int get length => _byType.length;
 
-  SchemaObject operator [](int index) => _schema[index];
-
-  @override
-  SchemaObject elementAt(int index) => _schema.elementAt(index);
+  SchemaObject<T>? getByType<T extends Object?>() => _byType[nullable<T>()] as SchemaObject<T>?;
 }
 
 /// The signature of a callback that will be invoked if a client reset error occurs for this [Realm].

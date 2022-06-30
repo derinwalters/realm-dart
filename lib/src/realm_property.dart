@@ -17,32 +17,78 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 import 'package:realm_common/realm_common.dart';
+import 'configuration.dart';
+import 'realm_object.dart';
+import 'list.dart';
+
+bool isNullable<T>() => null is T;
+
+Type ifNullableThenElse<T, TIf, TElse>() => isNullable<T>() ? TIf : TElse;
+
+Type nullable<T>() => ifNullableThenElse<T, T, T?>();
 
 /// Describes a [RealmObject]'s property with its name, type and other attributes in the [RealmSchema]
 ///{@category Configuration}
-class SchemaProperty {
-  /// The name of the property as persisted in the `Realm`
+class ValueProperty<T extends Object?> {
+  /// The name of the property as persisted in the [Realm]
   final String name;
 
-  final String? linkTarget;
-
-  /// Defines the `Realm` collection type if this property is a collection.
-  final RealmCollectionType collectionType;
+  /// The [RealmPropertyType] of the property
+  final RealmPropertyType propertyType;
 
   /// `true` if the property is a primary key.
   final bool primaryKey;
 
-  /// The `Realm` type of the property
-  final RealmPropertyType propertyType;
+  /// Defines the [Realm] collection type if this property is a collection.
+  final RealmCollectionType collectionType;
+
+  /// Default value to use, if any
+  final T? defaultValue;
+
+  const ValueProperty(
+    this.name,
+    this.propertyType, {
+    this.primaryKey = false,
+    this.collectionType = RealmCollectionType.none,
+    this.defaultValue,
+  });
+
+  /// [Type] of the property
+  Type get type => T;
 
   /// `true` if the property is optional
-  final bool optional;
+  bool get optional => isNullable<T>() || defaultValue != null;
 
-  /// An alias to another property of the same RealmObject
-  final String? mapTo;
+  T getValue<ParentT extends RealmObject>(ParentT object) {
+    return (object.accessor.getValue(object, this) ?? defaultValue) as T;
+  }
 
-  /// @nodoc
-  const SchemaProperty(this.name, this.propertyType,
-      {this.optional = false, this.mapTo, this.primaryKey = false, this.linkTarget, this.collectionType = RealmCollectionType.none
-      });
+  void setValue(RealmObject object, T value) {
+    object.accessor.set(object, this, value);
+  }
+}
+
+class LinkTargetProperty<LinkT extends Object?, T extends Object?> extends ValueProperty<T> {
+  const LinkTargetProperty(super.name, super.propertyType, {super.collectionType});
+
+  /// Schema of the link target type
+  SchemaObject? linkTarget(RealmSchema schema) => schema.getByType<LinkT>();
+}
+
+class ObjectProperty<LinkT extends RealmObject> extends LinkTargetProperty<LinkT, LinkT?> {
+  const ObjectProperty(String name) : super(name, RealmPropertyType.object);
+
+  @override
+  LinkT? getValue<ParentT extends RealmObject>(ParentT object) {
+    return object.accessor.getObject<LinkT>(object, this);
+  }
+}
+
+class ListProperty<ElementT extends Object?> extends LinkTargetProperty<ElementT, RealmList<ElementT>> {
+  const ListProperty(super.name, super.propertyType) : super(collectionType: RealmCollectionType.list);
+
+  @override
+  RealmList<ElementT> getValue<ParentT extends RealmObject>(ParentT object) {
+    return object.accessor.getList<ElementT>(object, this);
+  }
 }

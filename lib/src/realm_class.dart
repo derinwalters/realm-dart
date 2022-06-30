@@ -15,7 +15,6 @@
 // limitations under the License.
 //
 ////////////////////////////////////////////////////////////////////////////////
-
 import 'dart:async';
 import 'dart:io';
 
@@ -28,8 +27,8 @@ import 'native/realm_core.dart';
 import 'realm_object.dart';
 import 'results.dart';
 import 'scheduler.dart';
-import 'subscription.dart';
 import 'session.dart';
+import 'subscription.dart';
 
 export 'package:realm_common/realm_common.dart'
     show
@@ -71,15 +70,14 @@ export "configuration.dart"
         ShouldCompactCallback,
         SyncErrorHandler,
         SyncClientResetErrorHandler;
-
 export 'credentials.dart' show Credentials, AuthProviderType, EmailPasswordAuthProvider;
 export 'list.dart' show RealmList, RealmListOfObject, RealmListChanges;
 export 'realm_object.dart' show RealmEntity, RealmException, RealmObject, RealmObjectChanges;
 export 'realm_property.dart';
 export 'results.dart' show RealmResults, RealmResultsChanges;
+export 'session.dart' show Session, SessionState, ConnectionState, ProgressDirection, ProgressMode, SyncProgress, ConnectionStateChange;
 export 'subscription.dart' show Subscription, SubscriptionSet, SubscriptionSetState, MutableSubscriptionSet;
 export 'user.dart' show User, UserState, UserIdentity;
-export 'session.dart' show Session, SessionState, ConnectionState, ProgressDirection, ProgressMode, SyncProgress, ConnectionStateChange;
 
 /// A [Realm] instance represents a `Realm` database.
 ///
@@ -108,8 +106,8 @@ class Realm {
 
   void _populateMetadata() {
     for (var realmClass in config.schema) {
-      final classMeta = realmCore.getClassMetadata(this, realmClass.name, realmClass.type);
-      final propertyMeta = realmCore.getPropertyMetadata(this, classMeta.key);
+      final classMeta = realmCore.getClassMetadata(this, realmClass);
+      final propertyMeta = realmCore.getPropertyMetadata(this, classMeta);
       final metadata = RealmMetadata(classMeta, propertyMeta);
       _metadata[realmClass.type] = metadata;
     }
@@ -162,9 +160,10 @@ class Realm {
           " Add type ${object.runtimeType} to your config before opening the Realm");
     }
 
-    final handle = metadata.class_.primaryKey == null
-        ? realmCore.createRealmObject(this, metadata.class_.key)
-        : realmCore.createRealmObjectWithPrimaryKey(this, metadata.class_.key, object.accessor.get(object, metadata.class_.primaryKey!)!);
+    final primaryKey = metadata.classMeta.primaryKey;
+    final handle = primaryKey == null
+        ? realmCore.createRealmObject(this, metadata.classMeta.key)
+        : realmCore.createRealmObjectWithPrimaryKey(this, metadata.classMeta.key, object.accessor.getValue(object, primaryKey)!);
 
     final accessor = RealmCoreAccessor(metadata);
     object.manage(this, handle, accessor);
@@ -247,14 +246,14 @@ class Realm {
   T? find<T extends RealmObject>(Object primaryKey) {
     RealmMetadata metadata = _getMetadata(T);
 
-    final handle = realmCore.find(this, metadata.class_.key, primaryKey);
+    final handle = realmCore.find(this, metadata.classMeta.key, primaryKey);
     if (handle == null) {
       return null;
     }
 
     final accessor = RealmCoreAccessor(metadata);
-    var object = RealmObjectInternal.create(T, this, handle, accessor);
-    return object as T;
+    var object = RealmObjectInternal.create<T>(this, handle, accessor);
+    return object;
   }
 
   RealmMetadata _getMetadata(Type type) {
@@ -271,7 +270,7 @@ class Realm {
   /// The returned [RealmResults] allows iterating all the values without further filtering.
   RealmResults<T> all<T extends RealmObject>() {
     RealmMetadata metadata = _getMetadata(T);
-    final handle = realmCore.findAll(this, metadata.class_.key);
+    final handle = realmCore.findAll(this, metadata.classMeta.key);
     return RealmResultsInternal.create<T>(handle, this);
   }
 
@@ -281,7 +280,7 @@ class Realm {
   /// and [Predicate Programming Guide.](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Predicates/AdditionalChapters/Introduction.html#//apple_ref/doc/uid/TP40001789)
   RealmResults<T> query<T extends RealmObject>(String query, [List<Object> args = const []]) {
     RealmMetadata metadata = _getMetadata(T);
-    final handle = realmCore.queryClass(this, metadata.class_.key, query, args);
+    final handle = realmCore.queryClass(this, metadata.classMeta.key, query, args);
     return RealmResultsInternal.create<T>(handle, this);
   }
 
@@ -327,9 +326,9 @@ class Realm {
     ..level = RealmLogLevel.info
     ..onRecord.listen((event) => print(event));
 
-  /// Used to shutdown Realm and allow the process to correctly release native resources and exit. 
-  /// 
-  /// Disclaimer: This method is mostly needed on Dart standalone and if not called the Dart probram will hang and not exit. 
+  /// Used to shutdown Realm and allow the process to correctly release native resources and exit.
+  ///
+  /// Disclaimer: This method is mostly needed on Dart standalone and if not called the Dart probram will hang and not exit.
   /// This is a workaround of a Dart VM bug and will be removed in a future version of the SDK.
   static void shutdown() => scheduler.stop();
 }
@@ -370,28 +369,21 @@ extension RealmInternal on Realm {
     return Realm._(config, handle);
   }
 
-  RealmObject createObject(Type type, RealmObjectHandle handle) {
-    RealmMetadata metadata = _getMetadata(type);
+  T createObject<T extends Object?>(RealmObjectHandle handle) {
+    RealmMetadata metadata = _getMetadata(T);
 
     final accessor = RealmCoreAccessor(metadata);
-    var object = RealmObjectInternal.create(type, this, handle, accessor);
+    final object = RealmObjectInternal.create<T>(this, handle, accessor);
     return object;
   }
 
-  RealmList<T> createList<T extends Object>(RealmListHandle handle) {
+  RealmList<T> createList<T extends Object?>(RealmListHandle handle) {
     return RealmListInternal.create(handle, this);
   }
 
   List<String> getPropertyNames(Type type, List<int> propertyKeys) {
     RealmMetadata metadata = _getMetadata(type);
-    final result = <String>[];
-    for (var key in propertyKeys) {
-      final name = metadata.getPropertyName(key);
-      if (name != null) {
-        result.add(name);
-      }
-    }
-    return result;
+    return propertyKeys.map((k) => metadata.getPropertyMetaByKey(k).property.name).toList();
   }
 }
 

@@ -142,6 +142,7 @@ class _NullableTypes {
   late ObjectId? objectIdProp;
   late Uuid? uuidProp;
   late int? intProp;
+  final intsProp = <double?>[];
 }
 
 @RealmModel()
